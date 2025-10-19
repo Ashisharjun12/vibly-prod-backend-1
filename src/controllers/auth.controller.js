@@ -33,8 +33,8 @@ export const googleCallback = async (req, res) => {
 
         res.cookie('refreshToken', refreshToken, {
             httpOnly: true,
-            secure: true,
-            sameSite: 'Strict',
+            secure: _config.NODE_ENV === 'production', // Only secure in production
+            sameSite: _config.NODE_ENV === 'production' ? 'None' : 'Lax', // Allow cross-site in production
             maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
         });
 
@@ -83,6 +83,10 @@ export const logoutUser = async (req, res) => {
 export const refreshToken = async (req, res) => {
     try {
         const oldRefreshToken = req.cookies.refreshToken;
+        console.log("Refresh token request received");
+        console.log("Cookies:", req.cookies);
+        console.log("Refresh token present:", !!oldRefreshToken);
+        
         if (!oldRefreshToken) {
             console.error("No refresh token provided");
             return res.status(401).json({
@@ -113,8 +117,8 @@ export const refreshToken = async (req, res) => {
 
         res.cookie('refreshToken', newRefreshToken, {
             httpOnly: true,
-            secure: true,
-            sameSite: 'Strict',
+            secure: _config.NODE_ENV === 'production', // Only secure in production
+            sameSite: _config.NODE_ENV === 'production' ? 'None' : 'Lax', // Allow cross-site in production
             maxAge: 7 * 24 * 60 * 60 * 1000
         });
 

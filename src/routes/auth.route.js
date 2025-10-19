@@ -34,6 +34,7 @@ router.get("/logout", authMiddleware, logoutUser);
 // @route   POST /api/auth/refresh-token
 router.post("/refresh-token", refreshToken);
 
+
 // @route   GET /api/auth/me
 router.get("/me", authMiddleware, async (req, res) => { 
     try {
