@@ -1,4 +1,4 @@
-import { createAdhocOrder, assignAWB, generatePickup } from './shipRocket.js';
+import { createAdhocOrder, assignAWB, generatePickup } from './shiprocket.js';
 
 /**
  * Shiprocket Webhook Configuration Service
