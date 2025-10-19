@@ -15,6 +15,7 @@ export const EmailWorker = async (job) => {
       data: data || {}
     };
     
+  console.dir("emailData",emailData.data.order);
     // Send the email
     await emailHelper(emailData);
     

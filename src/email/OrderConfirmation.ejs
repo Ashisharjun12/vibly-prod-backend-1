@@ -415,7 +415,7 @@
                     <div class="product-specs">
                         Quantity: <%= item.quantity %>
                     </div>
-                    <div class="product-price">₹<%= (item.amount.price * item.quantity).toLocaleString('en-IN') %></div>
+                    <div class="product-price">₹<%= (item.price * item.quantity).toLocaleString('en-IN') %></div>
                 </div>
             </div>
             <% }); %>
@@ -427,7 +427,7 @@
             
             <div class="summary-row">
                 <span class="summary-label">Subtotal: </span>
-                <span class="summary-value"> ₹<%= order.items.reduce((sum, item) => sum + (item.amount.price * item.quantity), 0).toLocaleString('en-IN') %></span>
+                <span class="summary-value"> ₹<%= order.items.reduce((sum, item) => sum + (item.price * item.quantity), 0).toLocaleString('en-IN') %></span>
             </div>
             
             <div class="summary-row">
