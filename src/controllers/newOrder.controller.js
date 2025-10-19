@@ -408,6 +408,7 @@ export const createOrder = async (req, res) => {
             },
           },
         };
+        console.log("Email data:", emailData.data.order.items);
 
         await EmailQueue.add("send-order-confirmation", emailData, {
           delay: 1000, // 1 second delay to ensure order is fully processed
