@@ -408,7 +408,7 @@ export const createOrder = async (req, res) => {
             },
           },
         };
-        console.log("Email data:", emailData.data.order.items);
+       
 
         await EmailQueue.add("send-order-confirmation", emailData, {
           delay: 1000, // 1 second delay to ensure order is fully processed
@@ -811,17 +811,7 @@ export const getAllOrders = async (req, res) => {
   }
 };
 
-const getOverallStatus = (statuses) => {
-  // Priority order like Flipkart's tracker
-  if (statuses.some((s) => s === "Return Requested" || s === "Returned"))
-    return "Return in Progress";
-  if (statuses.every((s) => s === "Refunded")) return "Refunded";
-  if (statuses.every((s) => s === "Cancelled")) return "Cancelled";
-  if (statuses.every((s) => s === "Delivered")) return "Delivered";
-  if (statuses.some((s) => s === "Ordered")) return "Placed";
-  if (statuses.some((s) => s === "Shipped")) return "Shipped";
-  return "Placed"; // default fallback
-};
+
 
 export const getOrderItemsByOrderId = async (req, res) => {
   try {

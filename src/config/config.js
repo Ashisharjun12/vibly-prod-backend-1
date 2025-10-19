@@ -28,7 +28,8 @@ const {
   SMTP_PORT,
   SMTP_SERVICE,
   SMTP_USER,
-  SMTP_PASS
+  SMTP_PASS,
+  ADMIN_EMAIL
 } = process.env;
 
 export const _config = {
@@ -57,5 +58,6 @@ export const _config = {
   SMTP_PORT,
   SMTP_SERVICE,
   SMTP_USER,
-  SMTP_PASS
+  SMTP_PASS,
+  ADMIN_EMAIL
 };

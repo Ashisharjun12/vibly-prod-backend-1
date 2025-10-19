@@ -39,6 +39,7 @@ import * as Sentry from "@sentry/node"
 import { startAllWorkers } from "./queue/workers/workerFactory.js";
 import shiprocketRoutes from "./routes/admin/shiprocket.route.js";
 import webhookRoutes from "./routes/webhook.route.js";
+import { createAdminUser } from "./utils/rolechange.js";
 
 
 // Initialize Sentry...,,,....
@@ -54,8 +55,15 @@ const PORT = _config.PORT;
 startAllWorkers();
 
 // Database connection
-connectDB().then(() => {
+connectDB().then(async () => {
   logger.info("MongoDB connected successfully");
+  
+  // Create admin user after database connection
+  try {
+    await createAdminUser();
+  } catch (error) {
+    logger.error("Failed to create admin user:", error);
+  }
 });
 
 // Middlewares
