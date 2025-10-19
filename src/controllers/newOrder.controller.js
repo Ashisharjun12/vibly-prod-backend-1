@@ -29,8 +29,8 @@ import {
   createAdhocOrder,
   generatePickup,
   assignAWB,
-  fetchAddress,
-} from "../services/shipRocket.js";
+  fetchAddress
+} from "../services/shiprocket.js";
 
 const statusMap = Object.values(OrderStatus).reduce((map, statusObj) => {
   map[statusObj.value] = statusObj.next;
