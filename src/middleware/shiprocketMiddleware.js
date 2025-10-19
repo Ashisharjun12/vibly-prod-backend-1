@@ -2,7 +2,7 @@ export const shiprocketMiddleware = async (req, res, next) => {
   try {
     const headers = req.headers;
     const token = headers["x-shiprocket-token"];
-    if (!token) return res.status(401).json({ message: "Unauthorized" });
+    if (!token) return res.status(401).json({ message: "Connect to Shiprocket first" });
     req.shiprocketToken = token;
     next();
   } catch (error) {

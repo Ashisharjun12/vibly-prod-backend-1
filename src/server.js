@@ -38,6 +38,7 @@ import initSentry from "./utils/sentry.js";
 import * as Sentry from "@sentry/node"
 import { startAllWorkers } from "./queue/workers/workerFactory.js";
 import shiprocketRoutes from "./routes/admin/shiprocket.route.js";
+import webhookRoutes from "./routes/webhook.route.js";
 
 
 // Initialize Sentry...,,,
@@ -143,6 +144,9 @@ app.use("/api/admin/users", adminMiddleware, adminUserRoutes);
 app.use("/api/admin/payments", adminMiddleware, adminPaymentRoutes);
 app.use("/api/admin/stats", adminMiddleware, adminStatsRoutes);
 app.use("/api/admin/shiprocket", adminMiddleware, shiprocketRoutes);
+
+// Webhook routes (no authentication required for external webhooks)
+app.use("/api/webhooks", webhookRoutes);
 
 
 

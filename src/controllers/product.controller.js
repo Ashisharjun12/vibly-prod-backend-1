@@ -18,73 +18,50 @@ import Sale from "../models/sale.model.js";
  */
 export const getAllProducts = async (req, res) => {
     try {
-        console.log("req.query", req.query)
         const {
             gender,
             category: categoryName,
             color: colorName,
-            price = {},
+            price: { lte: priceLte, gte: priceGte } = {},
             sort = "newest",
             page = "1",
             limit = "20",
             isOnSale,
-            search,
         } = req.query;
 
-        const priceLte = price?.lte;
-        const priceGte = price?.gte;
 
-
-        
+        console.log("Min Price Filter:", priceGte, "Max Price Filter:", priceLte);
 
         const pageNum = Math.max(parseInt(page, 10), 1);
         const perPage = Math.max(parseInt(limit, 10), 1);
         const skipNum = (pageNum - 1) * perPage;
-        
+
         const matchFilter = { isActive: true };
 
-        // Handle search filter
-        if (search && search.trim()) {
-            const searchRegex = new RegExp(search.trim(), 'i'); // Case-insensitive search
-            matchFilter.$or = [
-                { name: searchRegex },
-                { description: searchRegex }
-            ];
-        }
-
-        // Handle category filter
-        if (categoryName) {
-            // Convert slug back to proper case and find category by name (case-insensitive)
-            const categoryNameFormatted = categoryName
-                .split('-')
-                .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
-                .join(' ');
-            
-            const category = await Category.findOne({ 
-                name: { $regex: new RegExp(`^${categoryNameFormatted}$`, 'i') }, 
-                isActive: true 
-            }).select("_id").lean();
-            
-            if (!category) return res.status(404).json({ message: `Category '${categoryName}' not found` });
-            matchFilter.category = category._id;
-        }
-        
-        // Handle gender filter (only if no specific category is selected)
+        // 🔹 Filter by gender
         if (gender) {
-            const genderCategories = await Category.find({ gender, isActive: true }).select("_id").lean();
-            if (genderCategories.length) {
-                matchFilter.category = { $in: genderCategories.map(c => c._id) };
-            } else {
-                console.log(`No categories found for gender: ${gender}`);
+            const genderCategories = await Category.find({ gender }).select("_id").lean();
+            if (!genderCategories.length) {
                 return res.status(200).json({
                     data: {
                         products: [],
-                        pagination: { totalProducts: 0, page: pageNum, limit: perPage, totalPages: 0 }
-                    }
+                        pagination: { totalProducts: 0, page: pageNum, limit: perPage, totalPages: 0 },
+                        minPrice: null,
+                        maxPrice: null,
+                    },
                 });
             }
+            matchFilter.category = { $in: genderCategories.map(c => c._id) };
         }
 
+        // 🔹 Filter by category
+        if (categoryName) {
+            const category = await Category.findOne({ name: categoryName, isActive: true }).select("_id").lean();
+            if (!category) return res.status(404).json({ message: `Category '${categoryName}' not found` });
+            matchFilter.category = category._id;
+        }
+
+        // 🔹 Filter by color
         let colorId = null;
         if (colorName) {
             const color = await Color.findOne({ name: colorName, isActive: true }).select("_id").lean();
@@ -92,185 +69,186 @@ export const getAllProducts = async (req, res) => {
             colorId = color._id;
         }
 
+        // 🔹 Handle sale filter
         if (isOnSale === "true") matchFilter.isOnSale = true;
         else if (isOnSale === "false") matchFilter.isOnSale = false;
 
-        let sortStage;
-        switch (sort) {
-            case "lowToHigh": sortStage = { unifiedPrice: 1 }; break;
-            case "highToLow": sortStage = { unifiedPrice: -1 }; break;
-            case "topRated": sortStage = { averageRating: -1 }; break;
-            case "bestSelling": sortStage = { salesCount: -1 }; break;
-            case "alphabetical": sortStage = { name: 1 }; break;
-            case "discount": sortStage = { "salePrice.discount": -1 }; break;
-            case "newest":
-            default: sortStage = { createdAt: -1 }; break;
+        // 🔹 Determine sort
+        const sortStageMap = {
+            lowToHigh: { unifiedPrice: 1 },
+            highToLow: { unifiedPrice: -1 },
+            topRated: { averageRating: -1 },
+            bestSelling: { salesCount: -1 },
+            alphabetical: { name: 1 },
+            discount: { "salePrice.discount": -1 },
+            newest: { createdAt: -1 },
+        };
+        const sortStage = sortStageMap[sort] || sortStageMap.newest;
+
+        // 🔹 Build base aggregation pipeline
+        const basePipeline = [
+            { $match: matchFilter },
+            {
+                $addFields: {
+                    unifiedPrice: {
+                        $cond: [
+                            "$isOnSale",
+                            { $ifNull: ["$salePrice.discountedPrice", "$salePrice.price"] },
+                            { $ifNull: ["$nonSalePrice.discountedPrice", "$nonSalePrice.price"] },
+                        ],
+                    },
+                },
+            },
+        ];
+
+        // 🔹 Only apply price filtering if user specified it
+        if (priceGte || priceLte) {
+            basePipeline.push({
+                $match: {
+                    unifiedPrice: {
+                        ...(priceGte ? { $gte: parseFloat(priceGte) } : {}),
+                        ...(priceLte ? { $lte: parseFloat(priceLte) } : {}),
+                    },
+                },
+            });
         }
 
-        const pipeline = [
-            { $match: matchFilter },
-          
-            {
-              $addFields: {
-                unifiedPrice: {
-                  $toDouble: {
-                    $cond: [
-                      { $eq: ["$isOnSale", true] },
-                      {
-                        $ifNull: [
-                          "$salePrice.discountedPrice",
-                          { $ifNull: ["$salePrice.price", "$nonSalePrice.discountedPrice"] }
-                        ]
-                      },
-                      {
-                        $ifNull: [
-                          "$nonSalePrice.discountedPrice",
-                          "$nonSalePrice.price"
-                        ]
-                      }
-                    ]
-                  }
-                }
-              }
-            },
-          
-            // FACET to compute min/max price BEFORE filtering
-            {
-              $facet: {
-                pricingRange: [
-                  {
-                    $group: {
-                      _id: null,
-                      minPrice: { $min: "$unifiedPrice" },
-                      maxPrice: { $max: "$unifiedPrice" }
-                    }
-                  }
-                ],
-          
-                // Actual product pipeline with price filtering, sorting, etc.
-                products: [
-                  // Conditionally apply price filter
-                  ...(priceGte || priceLte ? [{
-                    $match: {
-                      unifiedPrice: {
-                        ...(priceGte ? { $gte: parseFloat(priceGte) } : {}),
-                        ...(priceLte ? { $lte: parseFloat(priceLte) } : {})
-                      }
-                    }
-                  }] : []),
-          
-                  // Filter by color
-                  ...(colorId ? [
-                    {
-                      $addFields: {
-                        variants: {
-                          $filter: {
-                            input: "$variants",
-                            as: "variant",
-                            cond: { $eq: ["$$variant.color", colorId] }
-                          }
-                        }
-                      }
-                    },
-                    {
-                      $match: {
-                        "variants.0": { $exists: true }
-                      }
-                    }
-                  ] : []),
-          
-                  // Populate category
-                  {
-                    $lookup: {
-                      from: "categories",
-                      localField: "category",
-                      foreignField: "_id",
-                      as: "category"
-                    }
-                  },
-                  { $unwind: "$category" },
-          
-                  // Populate variant color
-                  { $unwind: { path: "$variants", preserveNullAndEmptyArrays: true } },
-                  {
-                    $lookup: {
-                      from: "colors",
-                      localField: "variants.color",
-                      foreignField: "_id",
-                      as: "variants.color"
-                    }
-                  },
-                  { $unwind: { path: "$variants.color", preserveNullAndEmptyArrays: true } },
-          
-                  // Group back the product
-                  {
-                    $group: {
-                      _id: "$_id",
-                      doc: { $first: "$$ROOT" },
-                      variants: { $push: "$variants" }
-                    }
-                  },
-                  {
+        // 🔹 Optional color filter (within variants)
+        if (colorId) {
+            basePipeline.push(
+                // 1️⃣ Keep only variants with that color
+                {
                     $addFields: {
-                      "doc.variants": "$variants"
-                    }
-                  },
-                  { $replaceRoot: { newRoot: "$doc" } },
-          
-                  // Sorting
-                  { $sort: sortStage },
-          
-                  // Pagination
-                  { $skip: skipNum },
-                  { $limit: perPage },
-          
-                  // Final projection
-                  {
-                    $project: {
-                      name: 1,
-                      description: 1,
-                      unifiedPrice: 1,
-                      isOnSale: 1,
-                      isActive: 1,
-                      salePrice: 1,
-                      nonSalePrice: 1,
-                      createdAt: 1,
-                      updatedAt: 1,
-                      category: { name: "$category.name" },
-                      variants: 1,
-                      specifications: 1,
-                      paymentOptions: 1,
-                      averageRating: 1,
-                      salesCount: 1,
-                      loggedInViews: 1,
-                      notLoggedInViews: 1
-                    }
-                  }
+                        variants: {
+                            $filter: {
+                                input: "$variants",
+                                as: "variant",
+                                cond: { $eq: ["$$variant.color", colorId] },
+                            },
+                        },
+                    },
+                },
+                // 2️⃣ Remove products that now have no variants
+                {
+                    $match: { "variants.0": { $exists: true } },
+                }
+            );
+        }
+
+        // 🔹 Category lookup
+        basePipeline.push(
+            {
+                $lookup: {
+                    from: "categories",
+                    localField: "category",
+                    foreignField: "_id",
+                    as: "category",
+                },
+            },
+            { $unwind: "$category" },
+            {
+                $unwind: {
+                    path: "$variants",
+                    preserveNullAndEmptyArrays: true,
+                },
+            },
+            {
+                $lookup: {
+                    from: "colors",
+                    localField: "variants.color",
+                    foreignField: "_id",
+                    as: "variants.color",
+                },
+            },
+            {
+                $unwind: {
+                    path: "$variants.color",
+                    preserveNullAndEmptyArrays: true,
+                },
+            },
+            {
+                $group: {
+                    _id: "$_id",
+                    doc: { $first: "$$ROOT" },
+                    variants: { $push: "$variants" },
+                },
+            },
+            {
+                $addFields: {
+                    "doc.variants": "$variants",
+                },
+            },
+            { $replaceRoot: { newRoot: "$doc" } },
+            { $sort: sortStage }
+        );
+
+        // 🔹 Pagination and total count
+        basePipeline.push({
+            $facet: {
+                products: [
+                    { $skip: skipNum },
+                    { $limit: perPage },
+                    {
+                        $project: {
+                            name: 1,
+                            description: 1,
+                            unifiedPrice: 1,
+                            isOnSale: 1,
+                            salePrice: 1,
+                            nonSalePrice: 1,
+                            createdAt: 1,
+                            updatedAt: 1,
+                            category: { name: "$category.name" },
+                            variants: 1,
+                            specifications: 1,
+                            paymentOptions: 1,
+                            averageRating: 1,
+                            salesCount: 1,
+                            loggedInViews: 1,
+                            notLoggedInViews: 1,
+                        },
+                    },
                 ],
-          
-                totalCount: [
-                  ...(priceGte || priceLte ? [{
-                    $match: {
-                      unifiedPrice: {
-                        ...(priceGte ? { $gte: parseFloat(priceGte) } : {}),
-                        ...(priceLte ? { $lte: parseFloat(priceLte) } : {})
-                      }
-                    }
-                  }] : []),
-                  { $count: "count" }
-                ]
-              }
-            }
-          ];
-          
+                totalCount: [{ $count: "count" }],
+            },
+        });
 
-        const result = await Product.aggregate(pipeline).exec();
-        const products = result[0].products;
-        const totalProducts = result[0].totalCount[0]?.count || 0;
-        const minPrice = result[0].pricingRange[0]?.minPrice || 0;
-        const maxPrice = result[0].pricingRange[0]?.maxPrice || 0;
-        console.log("result", result[0])
+        // 🔹 Execute main query
+        const result = await Product.aggregate(basePipeline).exec();
+        const products = result[0]?.products || [];
+        const totalProducts = result[0]?.totalCount[0]?.count || 0;
 
+        // 🔹 Compute min & max price only if no price filters applied
+        let minPrice = null;
+        let maxPrice = null;
+
+        if (priceGte || priceLte) {
+            const priceRange = await Product.aggregate([
+                { $match: matchFilter },
+                {
+                    $addFields: {
+                        unifiedPrice: {
+                            $cond: [
+                                "$isOnSale",
+                                { $ifNull: ["$salePrice.discountedPrice", "$salePrice.price"] },
+                                { $ifNull: ["$nonSalePrice.discountedPrice", "$nonSalePrice.price"] },
+                            ],
+                        },
+                    },
+                },
+                {
+                    $group: {
+                        _id: null,
+                        min: { $min: "$unifiedPrice" },
+                        max: { $max: "$unifiedPrice" },
+                    },
+                },
+            ]);
+            minPrice = priceRange[0]?.min ?? null;
+            maxPrice = priceRange[0]?.max ?? null;
+        }
+
+        console.log("Min Price:", minPrice, "Max Price:", maxPrice);
 
         return res.status(200).json({
             data: {
@@ -279,21 +257,20 @@ export const getAllProducts = async (req, res) => {
                     totalProducts,
                     page: pageNum,
                     limit: perPage,
-                    totalPages: Math.ceil(totalProducts / perPage)
+                    totalPages: Math.ceil(totalProducts / perPage),
                 },
-                minPrice,
-                maxPrice
-            }
+                ...(minPrice !== null && maxPrice !== null ? { minPrice, maxPrice } : {}),
+            },
         });
-
     } catch (err) {
         console.error("Error in getAllProducts:", err);
         return res.status(500).json({
             message: "Failed to fetch products",
-            error: err.message
+            error: err.message,
         });
     }
 };
+
 
 
 /**

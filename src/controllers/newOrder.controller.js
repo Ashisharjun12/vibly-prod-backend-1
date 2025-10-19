@@ -29,6 +29,7 @@ import {
   createAdhocOrder,
   generatePickup,
   assignAWB,
+  fetchAddress,
 } from "../services/shipRocket.js";
 
 const statusMap = Object.values(OrderStatus).reduce((map, statusObj) => {
@@ -127,6 +128,8 @@ export const createOrder = async (req, res) => {
   console.log(
     "Backend will calculate shipping charges based on payment method"
   );
+
+  console.log("totalAmount:", totalAmount);
 
   // Additional validation for payment method
   if (!Object.values(PaymentMethod).includes(paymentMethod)) {
@@ -270,11 +273,6 @@ export const createOrder = async (req, res) => {
           ? product.salePrice.discountedPrice
           : product.nonSalePrice.discountedPrice;
 
-        // Calculate shipping charges based on payment method
-        let itemShippingCharges = 0;
-        if (paymentMethod === PaymentMethod.COD) {
-          itemShippingCharges = 50; // ₹50 for COD orders
-        }
 
         // Get the best available image
         const productImage = variant.images?.[0] ||
@@ -490,7 +488,7 @@ export const getUserOrders = async (req, res) => {
 
       // Calculate total amount and items
       const totalAmount = order.items.reduce(
-        (sum, item) => sum + item.amount.totalAmount,
+        (sum, item) => sum + (item.amount * item.quantity),
         0
       );
       const totalItems = order.items.reduce(
@@ -602,10 +600,7 @@ export const getOrderByOrderId = async (req, res) => {
       overallStatus = OrderStatus.SHIPPED.value;
 
     // Calculate total amount and items
-    const totalAmount = order.items.reduce(
-      (sum, item) => sum + item.amount.totalAmount,
-      0
-    );
+    const totalAmount = order.amount.totalAmount;
     const totalItems = order.items.reduce(
       (sum, item) => sum + item.quantity,
       0
@@ -831,11 +826,7 @@ export const getOrderItemsByOrderId = async (req, res) => {
   try {
     const { orderId } = req.params;
 
-    const order = await Order.findOne({ orderId })
-      .populate("user")
-      .populate("items.product.productId", "name image")
-      .lean();
-
+    const order = await Order.findOne({ orderId }).lean();
     if (!order) {
       return res
         .status(404)
@@ -843,68 +834,85 @@ export const getOrderItemsByOrderId = async (req, res) => {
     }
 
     const productsMap = {};
-    const itemStatuses = order.items.map((i) => i.orderStatus);
-    const overallStatus = getOverallStatus(itemStatuses);
-
     for (const item of order.items) {
-      const productId = item.product.productId.toString();
-      const statusKey = item.orderStatus;
+      const variantKey = `${item.product.productId}_${item.color.name}_${item.size}`;
 
-      if (!productsMap[productId]) {
-        productsMap[productId] = {
-          productId,
+      if (!productsMap[variantKey]) {
+        productsMap[variantKey] = {
+          productId: item.product.productId,
           name: item.product.name,
           image: item.product.image,
           color: item.color,
           size: item.size,
           amount: item.amount,
           quantity: 0,
-          itemsGroupedByStatus: {},
+          items: [],
         };
       }
 
-      if (!productsMap[productId].itemsGroupedByStatus[statusKey]) {
-        productsMap[productId].itemsGroupedByStatus[statusKey] = [];
-      }
-
-      productsMap[productId].itemsGroupedByStatus[statusKey].push({
+      productsMap[variantKey].quantity += item.quantity;
+      productsMap[variantKey].items.push({
         _id: item._id,
         orderStatus: item.orderStatus,
-        cancelId: item.cancelId,
         cancelledAt: item.cancelledAt,
-        returnId: item.returnId,
+        cancelId: item.cancelId,
         returnRequestedAt: item.returnRequestedAt,
+        returnId: item.returnId,
         returnedAt: item.returnedAt,
         refundAmount: item.refundAmount,
         refundProcessedAt: item.refundProcessedAt,
         refundStatus: item.refundStatus,
         returnRequestNote: item.returnRequestNote,
         statusHistory: item.statusHistory,
-        size: item.size,
+        quantiy: item.quantity,
       });
-
-      productsMap[productId].quantity += item.quantity;
     }
 
+    const products = Object.values(productsMap);
+
+    // Determine overall order status
+    const statuses = order.items.map((i) => i.orderStatus);
+    let overallStatus = OrderStatus.ORDERED.value;
+    if (statuses.every((s) => s === OrderStatus.DELIVERED.value))
+      overallStatus = OrderStatus.DELIVERED.value;
+    else if (statuses.every((s) => s === OrderStatus.CANCELLED.value))
+      overallStatus = OrderStatus.CANCELLED.value;
+    else if (statuses.every((s) => s === OrderStatus.RETURNED.value))
+      overallStatus = OrderStatus.RETURNED.value;
+    else if (statuses.includes(OrderStatus.RETURN_REQUESTED.value))
+      overallStatus = OrderStatus.RETURN_REQUESTED.value;
+    else if (statuses.includes(OrderStatus.SHIPPED.value))
+      overallStatus = OrderStatus.SHIPPED.value;
+
+    // Calculate total amount and items
+    const totalAmount = order.amount.totalAmount;
+    const totalItems = order.items.reduce(
+      (sum, item) => sum + item.quantity,
+      0
+    );
+
+    const user = await User.findById(order.user).select("firstname lastname email");
+    console.log("user : ", user);
+
     const transformedOrder = {
-      user: {
-        _id: order.user._id,
-        name:
-          `${order.user.firstname || ""} ${order.user.lastname || ""}`.trim() ||
-          "Unknown Customer",
-        email: order.user.email || "No email",
-        phone: order.user.phoneNumber || "",
-        profileImage: order.user.profile || "",
-      },
+      _id: order._id,
       orderId: order.orderId,
-      overallStatus,
-      products: Object.values(productsMap),
+      overallStatus: overallStatus,
+      status: overallStatus, // Keep for backward compatibility
+      items: order.items, // Include full items array for detailed view
+      products, // Grouped products
       orderedAt: order.orderedAt,
+      totalAmount: totalAmount,
+      totalItems: totalItems,
       shippingInfo: order.shippingInfo,
       paymentMethod: order.paymentMethod,
       paymentStatus: order.paymentStatus,
       paymentProvider: order.paymentProvider,
       transactionId: order.transactionId,
+      trackingNumber: order.trackingNumber,
+      createdAt: order.createdAt,
+      updatedAt: order.updatedAt,
+      user: {name : user.firstname, email : user.email},
     };
 
     return res.status(200).json({ success: true, data: transformedOrder });
@@ -914,192 +922,6 @@ export const getOrderItemsByOrderId = async (req, res) => {
   }
 };
 
-// PUT /admin/items/:itemId/status
-export const updateOrderItemStatus = async (req, res) => {
-  const { itemId, quantity, newStatus, note = "" } = req.body;
-
-  if (!itemId || !newStatus || !quantity || quantity < 1) {
-    return res
-      .status(400)
-      .json({ success: false, message: "Please fill all fields." });
-  }
-
-  try {
-    await withTransaction(async (session) => {
-      if (!itemId || !quantity || quantity < 1 || !newStatus) {
-        throw new Error("Invalid item, quantity, or status");
-      }
-
-      // Find the order containing this item
-      const order = await Order.findOne({ "items._id": itemId }).session(
-        session
-      );
-      if (!order) throw new Error(`Item not found: ${itemId}`);
-
-      const itemIndex = order.items.findIndex(
-        (i) => i._id.toString() === itemId
-      );
-      const item = order.items[itemIndex];
-      if (!item) throw new Error(`Item not found in order: ${itemId}`);
-
-      // Validate status transition
-      if (!canTransition(item.orderStatus, newStatus)) {
-        throw new Error(
-          `Cannot transition from ${item.orderStatus} to ${newStatus}`
-        );
-      }
-
-      // Generate IDs for special cases
-      if (newStatus === "Cancelled" && !item.cancelId) {
-        let cancelId;
-        do {
-          cancelId = generateCancelId();
-        } while (
-          await Order.exists({ "items.cancelId": cancelId }).session(session)
-        );
-        item.cancelId = cancelId;
-      }
-
-      if (newStatus === "Returned" && !item.returnId) {
-        let returnId;
-        do {
-          returnId = generateReturnId();
-        } while (
-          await Order.exists({ "items.returnId": returnId }).session(session)
-        );
-        item.returnId = returnId;
-      }
-
-      // Handle partial quantity update
-      if (quantity < item.quantity) {
-        const updatedBatch = {
-          ...item.toObject(),
-          quantity,
-          orderStatus: newStatus,
-          statusHistory: [
-            ...item.statusHistory,
-            { status: newStatus, note, changedAt: new Date() },
-          ],
-        };
-
-        // Update special fields for Returned/Cancelled
-        if (newStatus === "Cancelled") updatedBatch.cancelledAt = new Date();
-        if (newStatus === "Returned") updatedBatch.returnedAt = new Date();
-
-        // Decrease original batch qty
-        item.quantity -= quantity;
-
-        // Push new batch
-        order.items.push(updatedBatch);
-      } else {
-        // Full batch status change
-        item.orderStatus = newStatus;
-        item.statusHistory.push({
-          status: newStatus,
-          note,
-          changedAt: new Date(),
-        });
-
-        if (newStatus === "Cancelled") item.cancelledAt = new Date();
-        if (newStatus === "Returned") item.returnedAt = new Date();
-      }
-
-      await order.save({ session });
-    });
-
-    return res
-      .status(200)
-      .json({ success: true, message: "Statuses updated successfully" });
-  } catch (err) {
-    console.error("Update Order Items Status Error:", err);
-    return res.status(500).json({ success: false, message: err.message });
-  }
-};
-
-// POST /admin/items/:itemId/return-cancel
-export const processReturnCancel = async (req, res) => {
-  const { itemId, quantity } = req.body; // quantity optional — defaults to full batch
-
-  if (!itemId) {
-    return res
-      .status(400)
-      .json({ success: false, message: "itemId is required" });
-  }
-
-  try {
-    await withTransaction(async (session) => {
-      const order = await Order.findOne({ "items._id": itemId }).session(
-        session
-      );
-      if (!order) throw new Error("Item not found");
-
-      const itemIndex = order.items.findIndex(
-        (i) => i._id.toString() === itemId
-      );
-      const item = order.items[itemIndex];
-      if (!item) throw new Error("Item not found in order");
-
-      // Default to full quantity if not provided
-      const cancelQty = quantity && quantity > 0 ? quantity : item.quantity;
-
-      if (cancelQty > item.quantity)
-        throw new Error("Cancel quantity exceeds available quantity");
-
-      // Validate status transition
-      if (
-        !canTransition(item.orderStatus, OrderStatus.RETURN_CANCELLED.value)
-      ) {
-        throw new Error(`Cannot cancel return at status: ${item.orderStatus}`);
-      }
-
-      // Handle partial quantity
-      if (cancelQty < item.quantity) {
-        const cancelledBatch = {
-          ...item.toObject(),
-          quantity: cancelQty,
-          orderStatus: OrderStatus.RETURN_CANCELLED.value,
-          statusHistory: [
-            ...item.statusHistory,
-            {
-              status: OrderStatus.RETURN_CANCELLED.value,
-              note: "Return request cancelled by admin",
-              changedAt: new Date(),
-            },
-          ],
-          returnCancelledAt: new Date(),
-        };
-
-        // Reduce original batch quantity
-        item.quantity -= cancelQty;
-
-        // Push the new cancelled batch
-        order.items.push(cancelledBatch);
-      } else {
-        // Full batch change
-        item.orderStatus = OrderStatus.RETURN_CANCELLED.value;
-        item.returnCancelledAt = new Date();
-        item.statusHistory.push({
-          status: OrderStatus.RETURN_CANCELLED.value,
-          note: "Return request cancelled by admin",
-          changedAt: new Date(),
-        });
-      }
-
-      await order.save({ session });
-    });
-
-    return res.status(200).json({
-      success: true,
-      message: "Return request cancelled successfully",
-    });
-  } catch (err) {
-    console.error("processReturnCancel error:", err);
-    return res.status(500).json({
-      success: false,
-      message: err.message,
-    });
-  }
-};
 
 // POST /admin/items/:itemId/refund
 export const processRefund = async (req, res) => {
@@ -2025,8 +1847,11 @@ export const updateReturnRequestStatus = async (req, res) => {
 export const createAdhocOrderStep = async (req, res) => {
   try {
     const { orderId } = req.params;
-    const { length, breadth, height, weight, address } = req.body;
+    const { length, breadth, height, weight } = req.body;
     const token = req.shiprocketToken;
+    
+    const {data: address} = await fetchAddress(token);
+    console.log("address : ", address);
 
     // Validate Shiprocket token
     if (!token) {
@@ -2057,7 +1882,7 @@ export const createAdhocOrderStep = async (req, res) => {
       }
 
       // Check if adhoc order already created
-      if (order.shiprocket?.adhocOrderCreated) {
+      if (order.shiprocket?.flags?.adhocOrderCreated) {
         throw new Error("Adhoc order already created for this order");
       }
 
@@ -2094,20 +1919,30 @@ export const createAdhocOrderStep = async (req, res) => {
           );
         }
 
-        // Initialize shiprocket object if not exists
-        if (!order.shiprocket) {
-          order.shiprocket = {};
-        }
+        // Update shiprocket data for all ordered items
+        const updatedShiprocketData = updateOrderWithShiprocketData(shiprocketResponse.data);
+        console.log('[DEBUG] Shiprocket response data:', shiprocketResponse.data);
+        console.log('[DEBUG] Updated shiprocket data to merge:', updatedShiprocketData);
 
-        // Update order with ShipRocket details and step flags
-        order.shiprocket = {
-          ...order.shiprocket,
-          ...updateOrderWithShiprocketData(shiprocketResponse.data),
-          flags: {
-            ...order.shiprocket.flags,
-            adhocOrderCreated: true,
-          },
-        };
+        // Add shiprocket data to all ordered items
+        orderedItems.forEach((item, index) => {
+          const itemIndex = order.items.findIndex(orderItem => orderItem._id.toString() === item._id.toString());
+          if (itemIndex !== -1) {
+            if (!order.items[itemIndex].shiprocket) {
+              order.items[itemIndex].shiprocket = {};
+            }
+            order.items[itemIndex].shiprocket = {
+              ...order.items[itemIndex].shiprocket,
+              ...updatedShiprocketData,
+              flags: {
+                ...order.items[itemIndex].shiprocket.flags,
+                adhocOrderCreated: true,
+              },
+            };
+          }
+        });
+
+        console.log("Updated ordered items with shiprocket data");
 
         await order.save({ session });
       } catch (shiprocketError) {
@@ -2121,12 +1956,16 @@ export const createAdhocOrderStep = async (req, res) => {
       }
     });
 
+    // Get shiprocket data from first ordered item
+    const firstOrderedItem = order.items.find(item => item.orderStatus === OrderStatus.ORDERED.value);
+    const shiprocketData = firstOrderedItem?.shiprocket || {};
+
     return res.status(200).json({
       success: true,
       message: "Adhoc order created successfully",
       data: {
-        orderId: order.shiprocket.orderId,
-        shipmentId: order.shiprocket.shipmentId,
+        orderId: shiprocketData.orderId,
+        shipmentId: shiprocketData.shipmentId,
       },
     });
   } catch (error) {
@@ -2144,8 +1983,11 @@ export const assignAWBStep = async (req, res) => {
     const { orderId } = req.params;
     const token = req.shiprocketToken;
 
+    console.debug("[assignAWBStep] orderId:", orderId, "token:", !!token);
+
     // Validate Shiprocket token
     if (!token) {
+      console.debug("[assignAWBStep] Shiprocket token missing");
       return res
         .status(400)
         .json({ success: false, message: "Shiprocket token required" });
@@ -2160,50 +2002,91 @@ export const assignAWBStep = async (req, res) => {
         .populate("items.product.productId", "name")
         .session(session);
 
+      console.debug("[assignAWBStep] Fetched order:", order?.orderId);
+
       if (!order) {
+        console.debug("[assignAWBStep] Order not found for orderId:", orderId);
         throw new Error("Order not found");
       }
 
-      // Check if adhoc order is created first
-      if (!order.shiprocket?.adhocOrderCreated) {
-        throw new Error("Adhoc order must be created before assigning AWB");
+      // Find ordered items with shiprocket data
+      const orderedItemsWithShiprocket = order.items.filter(
+        item => item.orderStatus === OrderStatus.ORDERED.value && item.shiprocket?.flags?.adhocOrderCreated
+      );
+
+      console.debug("[assignAWBStep] orderedItemsWithShiprocket:", orderedItemsWithShiprocket.map(i => i._id.toString()));
+
+      if (orderedItemsWithShiprocket.length === 0) {
+        console.debug("[assignAWBStep] No ordered items with adhoc order created found");
+        throw new Error("No ordered items with adhoc order created found");
       }
 
-      // Check if AWB already assigned
-      if (order.shiprocket?.awbAssigned) {
+      // Check if AWB already assigned to any ordered item
+      const hasAWB = orderedItemsWithShiprocket.some(item => item.shiprocket?.flags?.awbAssigned);
+      console.debug("[assignAWBStep] hasAWB:", hasAWB);
+
+      if (hasAWB) {
+        console.debug("[assignAWBStep] AWB already assigned on one of the items");
         throw new Error("AWB already assigned for this order");
       }
 
       try {
+        // Get shipmentId from first ordered item
+        const firstOrderedItem = orderedItemsWithShiprocket[0];
+        const shipmentId = firstOrderedItem.shiprocket.shipmentId;
+
+        console.debug("[assignAWBStep] shipmentId for assign:", shipmentId);
+
         // Assign AWB
-        const awbResponse = await assignAWB(order.shiprocket.shipmentId, token);
+        const awbResponse = await assignAWB(shipmentId, token);
+        console.debug("[assignAWBStep] awbResponse:", awbResponse);
+
         if (!awbResponse.success) {
+          console.debug("[assignAWBStep] Failed to assign AWB:", awbResponse.error);
           throw new Error(`Failed to assign AWB: ${awbResponse.error}`);
         }
 
-        // Update order with AWB details and step flags
-        order.shiprocket = {
-          ...order.shiprocket,
-          ...updateOrderWithAWBData(order, awbResponse.data),
-          flags: {
-            ...order.shiprocket.flags,
-            awbAssigned: true,
-          },
-        };
+        // Update AWB details for all ordered items with shiprocket data
+        const awbData = updateOrderWithAWBData(order, awbResponse.data.response.data);
+        console.debug("[assignAWBStep] AWB data after updateOrderWithAWBData:", awbData);
 
-        await order.save({ session });
+        orderedItemsWithShiprocket.forEach((item, index) => {
+          const itemIndex = order.items.findIndex(orderItem => orderItem._id.toString() === item._id.toString());
+          if (itemIndex !== -1) {
+            order.items[itemIndex].shiprocket = {
+              ...order.items[itemIndex].shiprocket,
+              ...awbData,
+              flags: {
+                ...order.items[itemIndex].shiprocket.flags,
+                awbAssigned: true,
+              },
+            };
+            console.debug(`[assignAWBStep] Updated shiprocket for itemIndex ${itemIndex}`, order.items[itemIndex].shiprocket);
+          }
+        });
+
+        const saveResult = await order.save({ session });
+        console.debug("[assignAWBStep] Order save result:", !!saveResult);
       } catch (awbError) {
         console.error("Shiprocket AWB assignment error:", awbError);
         throw new Error(`Failed to assign AWB: ${awbError.message}`);
       }
     });
 
+    // Get AWB data from first ordered item
+    const firstOrderedItem = order.items.find(item => 
+      item.orderStatus === OrderStatus.ORDERED.value && item.shiprocket?.flags?.awbAssigned
+    );
+    const shiprocketData = firstOrderedItem?.shiprocket || {};
+
+    console.debug("[assignAWBStep] Returning shiprocketData:", shiprocketData);
+
     return res.status(200).json({
       success: true,
       message: "AWB assigned successfully",
       data: {
-        trackingNumber: order.shiprocket.trackingNumber,
-        courierName: order.shiprocket.courierName,
+        trackingNumber: shiprocketData.trackingNumber,
+        courierName: shiprocketData.courierName,
       },
     });
   } catch (error) {
@@ -2221,8 +2104,11 @@ export const generatePickupStep = async (req, res) => {
     const { orderId } = req.params;
     const token = req.shiprocketToken;
 
+    console.debug("[generatePickupStep] orderId:", orderId, "token:", !!token);
+
     // Validate Shiprocket token
     if (!token) {
+      console.debug("[generatePickupStep] Shiprocket token missing");
       return res
         .status(400)
         .json({ success: false, message: "Shiprocket token required" });
@@ -2237,38 +2123,64 @@ export const generatePickupStep = async (req, res) => {
         .populate("items.product.productId", "name")
         .session(session);
 
+      console.debug("[generatePickupStep] Fetched order:", order?.orderId);
+
       if (!order) {
+        console.debug("[generatePickupStep] Order not found for orderId:", orderId);
         throw new Error("Order not found");
       }
 
-      // Check if AWB is assigned first
-      if (!order.shiprocket?.awbAssigned) {
-        throw new Error("AWB must be assigned before generating pickup");
+      // Find ordered items with AWB assigned
+      const orderedItemsWithAWB = order.items.filter(
+        item => item.orderStatus === OrderStatus.ORDERED.value && item.shiprocket?.flags?.awbAssigned
+      );
+
+      console.debug("[generatePickupStep] orderedItemsWithAWB:", orderedItemsWithAWB.map(i => i._id.toString()));
+
+      if (orderedItemsWithAWB.length === 0) {
+        console.debug("[generatePickupStep] No ordered items with AWB assigned found");
+        throw new Error("No ordered items with AWB assigned found");
       }
 
-      // Check if pickup already generated
-      if (order.shiprocket?.pickupGenerated) {
+      // Check if pickup already generated for any ordered item
+      const hasPickup = orderedItemsWithAWB.some(item => item.shiprocket?.flags?.pickupGenerated);
+      console.debug("[generatePickupStep] hasPickup:", hasPickup);
+
+      if (hasPickup) {
+        console.debug("[generatePickupStep] Pickup already generated on one of the items");
         throw new Error("Pickup already generated for this order");
       }
 
       try {
+        // Get shipmentId from first ordered item
+        const firstOrderedItem = orderedItemsWithAWB[0];
+        const shipmentId = firstOrderedItem.shiprocket.shipmentId;
+
+        console.debug("[generatePickupStep] shipmentId for pickup:", shipmentId);
+
         // Generate pickup
-        const pickupResponse = await generatePickup(
-          order.shiprocket.shipmentId,
-          token
-        );
+        const pickupResponse = await generatePickup(shipmentId, token);
+        console.debug("[generatePickupStep] pickupResponse:", pickupResponse);
+
         if (!pickupResponse.success) {
+          console.debug("[generatePickupStep] Failed to generate pickup:", pickupResponse.error);
           throw new Error(`Failed to generate pickup: ${pickupResponse.error}`);
         }
 
-        // Update order with pickup step flags
-        order.shiprocket = {
-          ...order.shiprocket,
-          flags: {
-            ...order.shiprocket.flags,
-            pickupGenerated: true,
-          },
-        };
+        // Update pickup flags for all ordered items with AWB
+        orderedItemsWithAWB.forEach((item, index) => {
+          const itemIndex = order.items.findIndex(orderItem => orderItem._id.toString() === item._id.toString());
+          if (itemIndex !== -1) {
+            order.items[itemIndex].shiprocket = {
+              ...order.items[itemIndex].shiprocket,
+              flags: {
+                ...order.items[itemIndex].shiprocket.flags,
+                pickupGenerated: true,
+              },
+            };
+            console.debug(`[generatePickupStep] Updated pickupGenerated for itemIndex ${itemIndex}`, order.items[itemIndex].shiprocket.flags);
+          }
+        });
 
         // Mark all ordered items as shipped after all steps are complete
         const historyEntry = createStatusHistoryEntry(
@@ -2285,34 +2197,45 @@ export const generatePickupStep = async (req, res) => {
 
             // Add Shiprocket data to each item
             item.shiprocket = {
-              orderId: order.shiprocket.orderId,
-              shipmentId: order.shiprocket.shipmentId,
-              trackingNumber: order.shiprocket.trackingNumber,
-              courierName: order.shiprocket.courierName,
+              orderId: order.shiprocket?.orderId,
+              shipmentId: order.shiprocket?.shipmentId,
+              trackingNumber: order.shiprocket?.trackingNumber,
+              courierName: order.shiprocket?.courierName,
             };
             shippedItemsCount++;
           }
         });
 
-        await order.save({ session });
+        console.debug("[generatePickupStep] shippedItemsCount after marking as shipped:", shippedItemsCount);
+
+        const saveResult = await order.save({ session });
+        console.debug("[generatePickupStep] Order save result:", !!saveResult);
       } catch (pickupError) {
         console.error("Shiprocket pickup generation error:", pickupError);
         throw new Error(`Failed to generate pickup: ${pickupError.message}`);
       }
     });
 
+    // Get shiprocket data from first ordered item
+    const firstOrderedItem = order.items.find(item => 
+      item.orderStatus === OrderStatus.ORDERED.value && item.shiprocket?.flags?.pickupGenerated
+    );
+    const shiprocketData = firstOrderedItem?.shiprocket || {};
+
+    console.debug("[generatePickupStep] Returning shiprocketData:", shiprocketData);
+
     return res.status(200).json({
       success: true,
       message: "Pickup generated successfully and order marked as shipped",
       data: {
-        pickupGenerated: order.shiprocket.pickupGenerated,
+        pickupGenerated: shiprocketData.flags?.pickupGenerated,
         shippedItemsCount: order.items.filter(
           (item) => item.orderStatus === OrderStatus.SHIPPED.value
         ).length,
         trackingInfo: {
-          trackingNumber: order.shiprocket.trackingNumber,
-          courierName: order.shiprocket.courierName,
-          shipmentId: order.shiprocket.shipmentId,
+          trackingNumber: shiprocketData.trackingNumber,
+          courierName: shiprocketData.courierName,
+          shipmentId: shiprocketData.shipmentId,
         },
       },
     });
@@ -2324,7 +2247,7 @@ export const generatePickupStep = async (req, res) => {
 
 /**
  * Cancel Order Item
- * POST /api/admin/newOrders/items/cancel
+ * POST /api/newOrders/items/cancel
  */
 
 export const cancelOrderItem = async (req, res) => {
@@ -2360,6 +2283,81 @@ export const cancelOrderItem = async (req, res) => {
       const historyEntry = {
         status: OrderStatus.CANCELLED.value,
         note: "Cancelled by user",
+        changedAt: new Date(),
+      };
+
+      if (quantity < item.quantity) {
+        // Partial cancellation → split into a new cancelled item
+        const cancelledBatch = item.toObject({ depopulate: true });
+        delete cancelledBatch._id;
+        cancelledBatch.quantity = quantity;
+        cancelledBatch.orderStatus = OrderStatus.CANCELLED.value;
+        cancelledBatch.statusHistory = [
+          ...cancelledBatch.statusHistory,
+          historyEntry,
+        ];
+
+        item.quantity -= quantity;
+        order.items.push(cancelledBatch);
+      } else {
+        // Full item cancellation
+        item.orderStatus = OrderStatus.CANCELLED.value;
+        item.statusHistory.push(historyEntry);
+      }
+
+      await order.save({ session });
+    });
+
+    return res
+      .status(200)
+      .json({ success: true, message: "Item(s) cancelled successfully" });
+  } catch (err) {
+    console.error("Cancel Order Error:", err);
+    return res
+      .status(500)
+      .json({ success: false, message: err.message || "Server error" });
+  }
+};
+
+
+/**
+ * Cancel Order Item
+ * POST /api/admin/newOrders/items/cancel
+ */
+
+export const cancelOrderItemByAdmin = async (req, res) => {
+  const { itemId, quantity, note, userId } = req.body;
+
+  if (!itemId || !Number.isInteger(quantity) || quantity < 1) {
+    return res.status(400).json({ success: false, message: "Invalid request" });
+  }
+
+  try {
+    await withTransaction(async (session) => {
+      const order = await Order.findOne({
+        "items._id": itemId,
+        user: userId,
+      }).session(session);
+      if (!order) throw new Error("Item not found");
+
+      const itemIndex = order.items.findIndex(
+        (i) => i._id.toString() === itemId
+      );
+      if (itemIndex === -1) throw new Error("Item not found in order");
+
+      const item = order.items[itemIndex];
+
+      if (!canTransition(item.orderStatus, OrderStatus.CANCELLED.value)) {
+        throw new Error(`Cannot cancel item from status: ${item.orderStatus}`);
+      }
+
+      if (quantity > item.quantity) {
+        throw new Error("Cancel quantity exceeds ordered quantity");
+      }
+
+      const historyEntry = {
+        status: OrderStatus.CANCELLED.value,
+        note: note,
         changedAt: new Date(),
       };
 
@@ -2697,6 +2695,183 @@ export const markItemAsDepartedForReturn = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: error.message || "Unable to process the return at this time. Please try again later or contact support if the issue persists."
+    });
+  }
+};
+
+
+// POST /admin/items/:itemId/return-cancel
+export const processReturnCancelByAdmin = async (req, res) => {
+  const { itemId, quantity } = req.body; // quantity optional — defaults to full batch
+
+  if (!itemId) {
+    return res
+      .status(400)
+      .json({ success: false, message: "itemId is required" });
+  }
+
+  try {
+    await withTransaction(async (session) => {
+      const order = await Order.findOne({ "items._id": itemId }).session(
+        session
+      );
+      if (!order) throw new Error("Item not found");
+
+      const itemIndex = order.items.findIndex(
+        (i) => i._id.toString() === itemId
+      );
+      const item = order.items[itemIndex];
+      if (!item) throw new Error("Item not found in order");
+
+      // Default to full quantity if not provided
+      const cancelQty = quantity && quantity > 0 ? quantity : item.quantity;
+
+      if (cancelQty > item.quantity)
+        throw new Error("Cancel quantity exceeds available quantity");
+
+      // Validate status transition
+      if (
+        !canTransition(item.orderStatus, OrderStatus.RETURN_CANCELLED.value)
+      ) {
+        throw new Error(`Cannot cancel return at status: ${item.orderStatus}`);
+      }
+
+      // Handle partial quantity
+      if (cancelQty < item.quantity) {
+        const cancelledBatch = {
+          ...item.toObject(),
+          quantity: cancelQty,
+          orderStatus: OrderStatus.RETURN_CANCELLED.value,
+          statusHistory: [
+            ...item.statusHistory,
+            {
+              status: OrderStatus.RETURN_CANCELLED.value,
+              note: "Return request cancelled by admin",
+              changedAt: new Date(),
+            },
+          ],
+          returnCancelledAt: new Date(),
+        };
+
+        // Reduce original batch quantity
+        item.quantity -= cancelQty;
+
+        // Push the new cancelled batch
+        order.items.push(cancelledBatch);
+      } else {
+        // Full batch change
+        item.orderStatus = OrderStatus.RETURN_CANCELLED.value;
+        item.returnCancelledAt = new Date();
+        item.statusHistory.push({
+          status: OrderStatus.RETURN_CANCELLED.value,
+          note: "Return request cancelled by admin",
+          changedAt: new Date(),
+        });
+      }
+
+      await order.save({ session });
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Return request cancelled successfully",
+    });
+  } catch (err) {
+    console.error("processReturnCancel error:", err);
+    return res.status(500).json({
+      success: false,
+      message: err.message,
+    });
+  }
+};
+
+export const processReturnCancel = async (req, res) => {
+  const { itemId, quantity } = req.body; // quantity optional — defaults to full batch
+  const userId = req.user;
+
+  if (!userId) {
+    return res
+      .status(400)
+      .json({ success: false, message: "Unauthorized" });
+  }
+
+  if (!itemId) {
+    return res
+      .status(400)
+      .json({ success: false, message: "Select the product to cancel return" });
+  }
+
+  try {
+    await withTransaction(async (session) => {
+      const order = await Order.findOne({ "items._id": itemId, user: userId }).session(
+        session
+      );
+      if (!order) throw new Error("Item not found");
+
+      const itemIndex = order.items.findIndex(
+        (i) => i._id.toString() === itemId
+      );
+      const item = order.items[itemIndex];
+      if (!item) throw new Error("Item not found in order");
+
+      // Default to full quantity if not provided
+      const cancelQty = quantity && quantity > 0 ? quantity : item.quantity;
+
+      if (cancelQty > item.quantity)
+        throw new Error("Cancel quantity exceeds available quantity");
+
+      // Validate status transition
+      if (
+        !canTransition(item.orderStatus, OrderStatus.RETURN_CANCELLED.value)
+      ) {
+        throw new Error(`Cannot cancel return at status: ${item.orderStatus}`);
+      }
+
+      // Handle partial quantity
+      if (cancelQty < item.quantity) {
+        const cancelledBatch = {
+          ...item.toObject(),
+          quantity: cancelQty,
+          orderStatus: OrderStatus.RETURN_CANCELLED.value,
+          statusHistory: [
+            ...item.statusHistory,
+            {
+              status: OrderStatus.RETURN_CANCELLED.value,
+              note: "Return request cancelled by admin",
+              changedAt: new Date(),
+            },
+          ],
+          returnCancelledAt: new Date(),
+        };
+
+        // Reduce original batch quantity
+        item.quantity -= cancelQty;
+
+        // Push the new cancelled batch
+        order.items.push(cancelledBatch);
+      } else {
+        // Full batch change
+        item.orderStatus = OrderStatus.RETURN_CANCELLED.value;
+        item.returnCancelledAt = new Date();
+        item.statusHistory.push({
+          status: OrderStatus.RETURN_CANCELLED.value,
+          note: "Return request cancelled by admin",
+          changedAt: new Date(),
+        });
+      }
+
+      await order.save({ session });
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Return request cancelled successfully",
+    });
+  } catch (err) {
+    console.error("processReturnCancel error:", err);
+    return res.status(500).json({
+      success: false,
+      message: err.message,
     });
   }
 };
