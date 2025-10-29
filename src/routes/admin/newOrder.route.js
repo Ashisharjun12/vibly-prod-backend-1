@@ -12,7 +12,9 @@ import {
     rejectRefundRequest,
     createAdhocOrderStep,
     assignAWBStep,
-    generatePickupStep
+    generatePickupStep,
+    updateOrderItemStatus,
+    getAvailableStatusTransitions
 } from '../../controllers/newOrder.controller.js';
 import { shiprocketMiddleware } from '../../middleware/shiprocketMiddleware.js';
 
@@ -48,5 +50,9 @@ router.put('/refunds/:refundRequestId/reject', rejectRefundRequest);
 router.post('/:orderId/create-adhoc-order', shiprocketMiddleware, createAdhocOrderStep);
 router.post('/:orderId/assign-awb', shiprocketMiddleware, assignAWBStep);
 router.post('/:orderId/generate-pickup', shiprocketMiddleware, generatePickupStep);
+
+// Manual status update routes for admin
+router.get('/items/:itemId/available-transitions', getAvailableStatusTransitions);
+router.put('/items/:itemId/update-status', updateOrderItemStatus);
 
 export default router;

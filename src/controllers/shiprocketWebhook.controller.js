@@ -3,10 +3,55 @@ import { NewOrder as Order, OrderStatus } from '../models/newOrder.model.js';
 import { withTransaction } from '../utils/withTransaction.js';
 import { createStatusHistoryEntry } from '../services/orderUtils.js';
 
-/**
- * Shiprocket Webhook Controller
- * Handles all webhook events from Shiprocket for order status updates
- */
+
+const normalizeShiprocketPayload = (raw) => {
+  // Some payloads use current_status / shipment_status; prefer the most specific
+  const status =
+    raw.status || raw.current_status || raw.shipment_status || raw.current_status_id || raw.shipment_status_id;
+
+  // Order identifiers can appear under different keys
+  const order_id = raw.order_id || raw.external_order_id || raw.channel_order_id || raw.id || raw.orderid || null;
+
+  // Shipment/Tracking identifiers
+  const shipment_id = raw.shipment_id || raw.shipmentid || null;
+  const tracking_number = raw.tracking_number || raw.tracking_id || raw.awb || raw.awb_code || String(raw.awb || '') || null;
+  const awb_code = raw.awb_code || raw.awb || null;
+  const courier_name = raw.courier_name || raw.courier || null;
+
+  // Timestamps
+  const updated_at = raw.updated_at || raw.current_timestamp || raw.etd || new Date().toISOString();
+
+  // Build tracking_data from scans if provided
+  const tracking_data = raw.tracking_data || (Array.isArray(raw.scans)
+    ? {
+        shipment_track_activities: raw.scans.map((s) => ({
+          date: s.date,
+          activity: s.activity,
+          location: s.location
+        })),
+        track_url: raw.tracking_url || null,
+        shipment_track: [
+          {
+            current_status: status || null
+          }
+        ]
+      }
+    : undefined);
+
+  const reason = raw.reason || raw.remark || raw.comment || undefined;
+
+  return {
+    order_id,
+    shipment_id,
+    status,
+    tracking_data,
+    courier_name,
+    awb_code,
+    tracking_number,
+    updated_at,
+    reason
+  };
+};
 
 // Shiprocket webhook signature verification
 const verifyWebhookSignature = (payload, signature, secret) => {
@@ -86,7 +131,7 @@ export const handleShiprocketWebhook = async (req, res) => {
       }
     }
     
-    const webhookData = req.body;
+    const webhookData = normalizeShiprocketPayload(req.body);
     console.log('Shiprocket webhook received:', JSON.stringify(webhookData, null, 2));
     
     // Extract order information from webhook
@@ -221,7 +266,7 @@ export const handleShiprocketReturnWebhook = async (req, res) => {
       }
     }
     
-    const webhookData = req.body;
+    const webhookData = normalizeShiprocketPayload(req.body);
     console.log('Shiprocket return webhook received:', JSON.stringify(webhookData, null, 2));
     
     const {
@@ -346,7 +391,7 @@ export const handleShiprocketTrackingWebhook = async (req, res) => {
       }
     }
     
-    const webhookData = req.body;
+    const webhookData = normalizeShiprocketPayload(req.body);
     console.log('Shiprocket tracking webhook received:', JSON.stringify(webhookData, null, 2));
     
     const {

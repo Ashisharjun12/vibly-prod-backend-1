@@ -2866,3 +2866,219 @@ export const processReturnCancel = async (req, res) => {
     });
   }
 };
+
+/**
+ * Manual Status Update for Admin
+ * POST /api/admin/newOrders/items/:itemId/update-status
+ * Allows admin to manually update order item status with proper validation
+ */
+export const updateOrderItemStatus = async (req, res) => {
+  const { itemId } = req.params;
+  const { status, note = "", quantity } = req.body;
+
+  // Validation
+  if (!itemId) {
+    return res.status(400).json({
+      success: false,
+      message: "Item ID is required"
+    });
+  }
+
+  if (!status) {
+    return res.status(400).json({
+      success: false,
+      message: "Status is required"
+    });
+  }
+
+  // Validate status is a valid OrderStatus
+  const validStatuses = Object.values(OrderStatus).map(s => s.value);
+  if (!validStatuses.includes(status)) {
+    return res.status(400).json({
+      success: false,
+      message: `Invalid status. Valid statuses are: ${validStatuses.join(", ")}`
+    });
+  }
+
+  try {
+    await withTransaction(async (session) => {
+      // Find the order containing this item
+      const order = await Order.findOne({ "items._id": itemId }).session(session);
+      if (!order) {
+        throw new Error("Order item not found");
+      }
+
+      // Find the specific item
+      const itemIndex = order.items.findIndex(
+        (item) => item._id.toString() === itemId
+      );
+      
+      if (itemIndex === -1) {
+        throw new Error("Item not found in order");
+      }
+
+      const item = order.items[itemIndex];
+      const currentStatus = item.orderStatus;
+
+      // Validate status transition
+      if (!canTransition(currentStatus, status)) {
+        const availableTransitions = statusMap[currentStatus] || [];
+        throw new Error(
+          `Cannot transition from "${currentStatus}" to "${status}". ` +
+          `Available transitions: ${availableTransitions.join(", ")}`
+        );
+      }
+
+      // Handle quantity if provided (for partial updates)
+      const updateQuantity = quantity && quantity > 0 ? quantity : item.quantity;
+      
+      if (updateQuantity > item.quantity) {
+        throw new Error("Update quantity exceeds item quantity");
+      }
+
+      // Create status history entry
+      const historyEntry = createStatusHistoryEntry(
+        status,
+        note || `Status updated from ${currentStatus} to ${status} by admin`
+      );
+
+      if (updateQuantity < item.quantity) {
+        // Partial update - split the item
+        const updatedBatch = item.toObject({ depopulate: true });
+        delete updatedBatch._id;
+        
+        updatedBatch.quantity = updateQuantity;
+        updatedBatch.orderStatus = status;
+        updatedBatch.statusHistory = [...updatedBatch.statusHistory, historyEntry];
+        
+        // Set specific timestamps based on status
+        if (status === OrderStatus.SHIPPED.value) {
+          updatedBatch.shippedAt = new Date();
+        } else if (status === OrderStatus.DELIVERED.value) {
+          updatedBatch.deliveredAt = new Date();
+        } else if (status === OrderStatus.CANCELLED.value) {
+          updatedBatch.cancelledAt = new Date();
+        } else if (status === OrderStatus.RETURN_REQUESTED.value) {
+          updatedBatch.returnRequestedAt = new Date();
+          updatedBatch.returnId = generateReturnId();
+        } else if (status === OrderStatus.RETURNED.value) {
+          updatedBatch.returnedAt = new Date();
+        }
+
+        // Reduce original item quantity
+        item.quantity -= updateQuantity;
+        
+        // Add the new batch
+        order.items.push(updatedBatch);
+      } else {
+        // Full update - modify existing item
+        item.orderStatus = status;
+        item.statusHistory.push(historyEntry);
+        
+        // Set specific timestamps based on status
+        if (status === OrderStatus.SHIPPED.value) {
+          item.shippedAt = new Date();
+        } else if (status === OrderStatus.DELIVERED.value) {
+          item.deliveredAt = new Date();
+        } else if (status === OrderStatus.CANCELLED.value) {
+          item.cancelledAt = new Date();
+        } else if (status === OrderStatus.RETURN_REQUESTED.value) {
+          item.returnRequestedAt = new Date();
+          item.returnId = generateReturnId();
+        } else if (status === OrderStatus.RETURNED.value) {
+          item.returnedAt = new Date();
+        }
+      }
+
+      await order.save({ session });
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: `Order item status updated successfully to ${status}`,
+      data: {
+        itemId,
+        newStatus: status,
+        note: note || `Status updated from ${currentStatus} to ${status} by admin`
+      }
+    });
+
+  } catch (err) {
+    console.error("Update Order Item Status Error:", err);
+    return res.status(500).json({
+      success: false,
+      message: err.message || "Failed to update order item status"
+    });
+  }
+};
+
+/**
+ * Get Available Status Transitions for an Item
+ * GET /api/admin/newOrders/items/:itemId/available-transitions
+ * Returns the possible status transitions for a specific order item
+ */
+export const getAvailableStatusTransitions = async (req, res) => {
+  const { itemId } = req.params;
+
+  if (!itemId) {
+    return res.status(400).json({
+      success: false,
+      message: "Item ID is required"
+    });
+  }
+
+  try {
+    const order = await Order.findOne({ "items._id": itemId });
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: "Order item not found"
+      });
+    }
+
+    const item = order.items.find(item => item._id.toString() === itemId);
+    if (!item) {
+      return res.status(404).json({
+        success: false,
+        message: "Item not found in order"
+      });
+    }
+
+    const currentStatus = item.orderStatus;
+    const availableTransitions = statusMap[currentStatus] || [];
+
+    // Get status details for available transitions
+    const transitionDetails = availableTransitions.map(statusValue => {
+      const statusObj = Object.values(OrderStatus).find(s => s.value === statusValue);
+      return {
+        value: statusValue,
+        label: statusObj?.label || statusValue,
+        description: statusObj?.description || ""
+      };
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        currentStatus: {
+          value: currentStatus,
+          label: Object.values(OrderStatus).find(s => s.value === currentStatus)?.label || currentStatus
+        },
+        availableTransitions: transitionDetails,
+        itemDetails: {
+          productName: item.product.name,
+          size: item.size,
+          color: item.color.name,
+          quantity: item.quantity
+        }
+      }
+    });
+
+  } catch (err) {
+    console.error("Get Available Transitions Error:", err);
+    return res.status(500).json({
+      success: false,
+      message: err.message || "Failed to get available transitions"
+    });
+  }
+};

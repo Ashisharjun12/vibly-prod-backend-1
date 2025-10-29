@@ -22,7 +22,7 @@ const testConfigs = {
       external_order_id: 'ORD-TEST-123',
       current_status: 'SHIPPED',
       tracking_id: 'TEST_TRACK_123',
-      courier_name: 'Test Courier',
+      courier_name: 'Test Courier',  
       shipment_id: 'TEST_SHIPMENT_123',
       timestamp: new Date().toISOString(),
       customer_name: 'Test Customer',

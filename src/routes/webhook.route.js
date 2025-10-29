@@ -8,27 +8,16 @@ import {
 
 const router = express.Router();
 
-// Middleware to parse JSON for webhooks
 router.use(express.json({ limit: '10mb' }));
 
-/**
- * Shiprocket Webhook Routes
- * These endpoints receive webhook notifications from Shiprocket
- */
-
-// Main webhook handler for order status updates
 router.post('/shiprocket', handleShiprocketWebhook);
 
-// Return/refund webhook handler
 router.post('/shiprocket/return', handleShiprocketReturnWebhook);
 
-// Tracking updates webhook handler
 router.post('/shiprocket/tracking', handleShiprocketTrackingWebhook);
 
-// Test webhook endpoint for development
 router.post('/shiprocket/test', testShiprocketWebhook);
 
-// Health check for webhook endpoints
 router.get('/health', (req, res) => {
   res.status(200).json({
     success: true,
@@ -41,6 +30,17 @@ router.get('/health', (req, res) => {
       'POST /api/webhooks/shiprocket/test'
     ]
   });
+});
+
+// Lightweight GET responders for Shiprocket console URL checks
+router.get('/shiprocket', (req, res) => {
+  res.status(200).json({ success: true, message: 'Shiprocket webhook URL active' });
+});
+router.get('/shiprocket/return', (req, res) => {
+  res.status(200).json({ success: true, message: 'Shiprocket return webhook URL active' });
+});
+router.get('/shiprocket/tracking', (req, res) => {
+  res.status(200).json({ success: true, message: 'Shiprocket tracking webhook URL active' });
 });
 
 export default router;
