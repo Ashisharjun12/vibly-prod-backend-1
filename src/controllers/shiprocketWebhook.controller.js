@@ -120,15 +120,13 @@ const getStatusNote = (shiprocketStatus, trackingData = {}) => {
 export const handleShiprocketWebhook = async (req, res) => {
   try {
     const payload = JSON.stringify(req.body);
-    const signature = req.headers['x-shiprocket-hmac-sha256'] || req.headers['x-shiphero-hmac-sha256'];
+    const signature = req.headers['x-api-key'];
     const webhookSecret = process.env.SHIPROCKET_WEBHOOK_SECRET;
     
     // Verify webhook signature if secret is provided
-    if (webhookSecret && signature) {
-      if (!verifyWebhookSignature(payload, signature, webhookSecret)) {
-        console.error('Invalid webhook signature');
-        return res.status(401).json({ success: false, message: 'Invalid signature' });
-      }
+    if (webhookSecret !== signature) {
+      console.error('Invalid webhook signature');
+      return res.status(401).json({ success: false, message: 'Invalid signature' });
     }
     
     const webhookData = normalizeShiprocketPayload(req.body);

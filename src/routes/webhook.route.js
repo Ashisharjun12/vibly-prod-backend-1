@@ -10,13 +10,15 @@ const router = express.Router();
 
 router.use(express.json({ limit: '10mb' }));
 
-router.post('/shiprocket', handleShiprocketWebhook);
+router.post('/', handleShiprocketWebhook);
 
-router.post('/shiprocket/return', handleShiprocketReturnWebhook);
+router.post('/handle', testShiprocketWebhook);
 
-router.post('/shiprocket/tracking', handleShiprocketTrackingWebhook);
+router.post('/return', handleShiprocketReturnWebhook);
 
-router.post('/shiprocket/test', testShiprocketWebhook);
+router.post('/tracking', handleShiprocketTrackingWebhook);
+
+router.post('/test', testShiprocketWebhook);
 
 router.get('/health', (req, res) => {
   res.status(200).json({
@@ -33,7 +35,7 @@ router.get('/health', (req, res) => {
 });
 
 // Lightweight GET responders for Shiprocket console URL checks
-router.get('/shiprocket', (req, res) => {
+router.get('/', (req, res) => {
   res.status(200).json({ success: true, message: 'Shiprocket webhook URL active' });
 });
 router.get('/shiprocket/return', (req, res) => {

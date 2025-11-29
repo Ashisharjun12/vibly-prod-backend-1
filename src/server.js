@@ -82,7 +82,7 @@ const allowedOrigins = [
 app.use(cors({
   origin: allowedOrigins,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
-  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "x-shiprocket-token"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "x-api-key"],
   exposedHeaders: ["Content-Range", "X-Content-Range"],
   credentials: true,
 }));
