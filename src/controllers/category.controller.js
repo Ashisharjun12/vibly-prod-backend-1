@@ -68,12 +68,11 @@ export const getProductsOfCategory = async (req, res) => {
             isActive: true 
         };
 
-        // Handle gender filter
-        if (gender) {
-            const genderCategories = await Category.find({ gender, isActive: true }).select("_id").lean();
-            if (genderCategories.length) {
-                matchFilter.category = { $in: genderCategories.map(c => c._id) };
-            }
+        // Handle gender filter - only allow "men" (women and unisex removed)
+        // Always filter by "men" regardless of query parameter
+        const genderCategories = await Category.find({ gender: "men", isActive: true }).select("_id").lean();
+        if (genderCategories.length) {
+            matchFilter.category = { $in: genderCategories.map(c => c._id) };
         }
 
         // Handle color filter

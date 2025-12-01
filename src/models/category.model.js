@@ -10,7 +10,8 @@ const categorySchema = new mongoose.Schema(
         gender: {
             type: String,
             required: [true, "Gender is required"],
-            enum: ["men", "women", "unisex"],
+            enum: ["men"],
+            default: "men",
         },
         isActive: {
             type: Boolean,

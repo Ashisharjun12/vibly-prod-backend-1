@@ -38,21 +38,20 @@ export const getAllProducts = async (req, res) => {
 
         const matchFilter = { isActive: true };
 
-        // 🔹 Filter by gender
-        if (gender) {
-            const genderCategories = await Category.find({ gender }).select("_id").lean();
-            if (!genderCategories.length) {
-                return res.status(200).json({
-                    data: {
-                        products: [],
-                        pagination: { totalProducts: 0, page: pageNum, limit: perPage, totalPages: 0 },
-                        minPrice: null,
-                        maxPrice: null,
-                    },
-                });
-            }
-            matchFilter.category = { $in: genderCategories.map(c => c._id) };
+        // 🔹 Filter by gender - only allow "men" (women and unisex removed)
+        // Always filter by "men" regardless of query parameter
+        const genderCategories = await Category.find({ gender: "men" }).select("_id").lean();
+        if (!genderCategories.length) {
+            return res.status(200).json({
+                data: {
+                    products: [],
+                    pagination: { totalProducts: 0, page: pageNum, limit: perPage, totalPages: 0 },
+                    minPrice: null,
+                    maxPrice: null,
+                },
+            });
         }
+        matchFilter.category = { $in: genderCategories.map(c => c._id) };
 
         // 🔹 Filter by category
         if (categoryName) {
