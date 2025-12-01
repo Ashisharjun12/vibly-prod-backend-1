@@ -42,12 +42,14 @@ export const uploadBanner = async (req, res) => {
 
         const uploaded = await uploadToCloudinary(file[0].path, "banners");
         const currentBannerCount = await Banner.countDocuments({ isActive: true });
+        const link = req.body.link || '';
 
         const banner = await Banner.create({
             image: {
                 public_id: uploaded.public_id,
                 url: uploaded.secure_url,
             },
+            link: link,
             order: currentBannerCount + 1,
             isActive: true,
             saleActive: false, // Sale status is managed separately
@@ -223,6 +225,42 @@ export const reorderBanners = async (req, res) => {
     }
 };
 
+
+/**
+ * @route   PATCH /:id/link
+ * @desc    Update a banner's link
+ * @access  Private (Admin)
+ */
+export const updateBannerLink = async (req, res) => {
+    try {
+        await withTransaction(async (session) => {
+            const id = req.params.id;
+            const { link } = req.body;
+
+            if (!mongoose.isValidObjectId(id)) {
+                throw new Error("Invalid banner");
+            }
+
+            const banner = await Banner.findById(id).session(session);
+            if (!banner) {
+                throw new Error("Banner not found");
+            }
+
+            banner.link = link || '';
+            await banner.save({ session });
+
+            res.status(200).json({
+                message: "Banner link updated successfully.",
+                data: banner,
+            });
+        });
+    } catch (err) {
+        res.status(500).json({
+            message: "Failed to update banner link",
+            error: err.message,
+        });
+    }
+};
 
 /**
  * @route   DELETE /:id

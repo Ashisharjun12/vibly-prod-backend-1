@@ -6,6 +6,10 @@ const bannerSchema = new Schema(
             public_id: String,
             url: String,
         },
+        link: {
+            type: String,
+            default: '',
+        },
         order: {
             type: Number,
             default: 0,

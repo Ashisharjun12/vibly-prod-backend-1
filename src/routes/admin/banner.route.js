@@ -1,5 +1,5 @@
 import express from "express";
-import { deleteBanner, getBannersForAdmin, reorderBanners, toggleBannerStatus, toggleBannerSaleStatus, uploadBanner } from "../../controllers/banners.controller.js";
+import { deleteBanner, getBannersForAdmin, reorderBanners, toggleBannerStatus, toggleBannerSaleStatus, uploadBanner, updateBannerLink } from "../../controllers/banners.controller.js";
 import { upload } from "../../middleware/multer.js";
 
 const router = express.Router();
@@ -38,6 +38,13 @@ router.patch("/:id/toggle-sale", toggleBannerSaleStatus);
  * @access  Private (Admin)
  */
 router.put("/reorder/all", reorderBanners);
+
+/**
+ * @route   PATCH /admin/banners/:id/link
+ * @desc    Update a banner's link
+ * @access  Private (Admin)
+ */
+router.patch("/:id/link", updateBannerLink);
 
 /**
  * @route   DELETE /admin/banners/:id

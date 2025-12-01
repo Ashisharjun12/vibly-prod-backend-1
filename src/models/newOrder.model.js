@@ -13,6 +13,27 @@ export const PaymentStatus = {
   REFUNDED: 'REFUNDED',
 };
 
+/**
+ * Order Status Configuration
+ * 
+ * This defines the order status flow for the entire application.
+ * Frontend must match this exactly: frontend/src/utils/orderStatus.js
+ * 
+ * Status Flow (Forward Only - No Backward Transitions):
+ * 
+ * 1. Ordered → Cancelled | Shipped
+ * 2. Shipped → Delivered
+ * 3. Delivered → Return Requested
+ * 4. Cancelled → Refunded
+ * 5. Return Requested → Departed For Returning | Return Cancelled
+ * 6. Departed For Returning → Returned | Return Cancelled
+ * 7. Returned → Refunded
+ * 8. Return Cancelled → [] (Final Status)
+ * 9. Refunded → [] (Final Status)
+ * 
+ * IMPORTANT: Only forward transitions are allowed. Once an order moves to a status,
+ * it cannot go back to a previous status (e.g., Shipped cannot go back to Ordered).
+ */
 export const OrderStatus = {
   ORDERED: { value: 'Ordered', next: ['Cancelled', 'Shipped'] },
   SHIPPED: { value: 'Shipped', next: ['Delivered'] },

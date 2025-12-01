@@ -37,9 +37,28 @@ const statusMap = Object.values(OrderStatus).reduce((map, statusObj) => {
   return map;
 }, {});
 
+/**
+ * Validates if a status transition is allowed (forward-only)
+ * Prevents backward transitions (e.g., Shipped -> Ordered)
+ */
 export const canTransition = (currentStatus, nextStatus) => {
-  if (!statusMap[currentStatus]) return false;
-  return statusMap[currentStatus].includes(nextStatus);
+  if (!statusMap[currentStatus]) {
+    console.warn(`Current status "${currentStatus}" not found in status map`);
+    return false;
+  }
+  
+  // Only allow transitions that are explicitly defined as "next" statuses
+  const allowedNextStatuses = statusMap[currentStatus];
+  const isAllowed = allowedNextStatuses.includes(nextStatus);
+  
+  if (!isAllowed) {
+    console.warn(
+      `Invalid transition attempt: "${currentStatus}" -> "${nextStatus}". ` +
+      `Allowed transitions: ${allowedNextStatuses.join(", ")}`
+    );
+  }
+  
+  return isAllowed;
 };
 
 const orderItemSchema = Joi.object({
@@ -497,17 +516,28 @@ export const getUserOrders = async (req, res) => {
         0
       );
 
-      // Determine overall order status
+      // Determine overall order status based on item statuses
+      // Priority: Final statuses > Return statuses > Shipped > Ordered
       const statuses = order.items.map((i) => i.orderStatus);
       let overallStatus = OrderStatus.ORDERED.value;
+      
+      // Check for final statuses (all items must be in same final status)
       if (statuses.every((s) => s === OrderStatus.DELIVERED.value))
         overallStatus = OrderStatus.DELIVERED.value;
       else if (statuses.every((s) => s === OrderStatus.CANCELLED.value))
         overallStatus = OrderStatus.CANCELLED.value;
       else if (statuses.every((s) => s === OrderStatus.RETURNED.value))
         overallStatus = OrderStatus.RETURNED.value;
+      else if (statuses.every((s) => s === OrderStatus.REFUNDED.value))
+        overallStatus = OrderStatus.REFUNDED.value;
+      // Check for return-related statuses
       else if (statuses.includes(OrderStatus.RETURN_REQUESTED.value))
         overallStatus = OrderStatus.RETURN_REQUESTED.value;
+      else if (statuses.includes(OrderStatus.DEPARTED_FOR_RETURNING.value))
+        overallStatus = OrderStatus.DEPARTED_FOR_RETURNING.value;
+      else if (statuses.includes(OrderStatus.RETURN_CANCELLED.value))
+        overallStatus = OrderStatus.RETURN_CANCELLED.value;
+      // Check for shipped status
       else if (statuses.includes(OrderStatus.SHIPPED.value))
         overallStatus = OrderStatus.SHIPPED.value;
 
@@ -563,10 +593,13 @@ export const getOrderByOrderId = async (req, res) => {
           amount: item.amount,
           quantity: 0,
           items: [],
+          itemsGroupedByStatus: {}, // Add itemsGroupedByStatus for consistency
         };
       }
 
       productsMap[variantKey].quantity += item.quantity;
+      
+      // Add to items array
       productsMap[variantKey].items.push({
         _id: item._id,
         orderStatus: item.orderStatus,
@@ -580,23 +613,61 @@ export const getOrderByOrderId = async (req, res) => {
         refundStatus: item.refundStatus,
         returnRequestNote: item.returnRequestNote,
         statusHistory: item.statusHistory,
-        quantiy: item.quantity,
+        quantity: item.quantity, // Fix typo: quantiy -> quantity
+        size: item.size,
+        color: item.color,
+        amount: item.amount,
+      });
+
+      // Add to itemsGroupedByStatus structure (for consistency with getUserOrders)
+      if (!productsMap[variantKey].itemsGroupedByStatus[item.orderStatus]) {
+        productsMap[variantKey].itemsGroupedByStatus[item.orderStatus] = [];
+      }
+
+      productsMap[variantKey].itemsGroupedByStatus[item.orderStatus].push({
+        _id: item._id,
+        orderStatus: item.orderStatus,
+        cancelledAt: item.cancelledAt,
+        cancelId: item.cancelId,
+        returnRequestedAt: item.returnRequestedAt,
+        returnId: item.returnId,
+        returnedAt: item.returnedAt,
+        refundAmount: item.refundAmount,
+        refundProcessedAt: item.refundProcessedAt,
+        refundStatus: item.refundStatus,
+        returnRequestNote: item.returnRequestNote,
+        statusHistory: item.statusHistory,
+        quantity: item.quantity,
+        size: item.size,
+        color: item.color,
+        amount: item.amount,
       });
     }
 
     const products = Object.values(productsMap);
 
-    // Determine overall order status
+    // Determine overall order status based on item statuses
+    // Priority: Final statuses > Return statuses > Shipped > Ordered
     const statuses = order.items.map((i) => i.orderStatus);
     let overallStatus = OrderStatus.ORDERED.value;
+    
+    // Check for final statuses (all items must be in same final status)
     if (statuses.every((s) => s === OrderStatus.DELIVERED.value))
       overallStatus = OrderStatus.DELIVERED.value;
     else if (statuses.every((s) => s === OrderStatus.CANCELLED.value))
       overallStatus = OrderStatus.CANCELLED.value;
     else if (statuses.every((s) => s === OrderStatus.RETURNED.value))
       overallStatus = OrderStatus.RETURNED.value;
+    else if (statuses.every((s) => s === OrderStatus.REFUNDED.value))
+      overallStatus = OrderStatus.REFUNDED.value;
+    // Check for return-related statuses
     else if (statuses.includes(OrderStatus.RETURN_REQUESTED.value))
       overallStatus = OrderStatus.RETURN_REQUESTED.value;
+    else if (statuses.includes(OrderStatus.DEPARTED_FOR_RETURNING.value))
+      overallStatus = OrderStatus.DEPARTED_FOR_RETURNING.value;
+    else if (statuses.includes(OrderStatus.RETURN_CANCELLED.value))
+      overallStatus = OrderStatus.RETURN_CANCELLED.value;
+    // Check for shipped status
     else if (statuses.includes(OrderStatus.SHIPPED.value))
       overallStatus = OrderStatus.SHIPPED.value;
 
@@ -838,10 +909,13 @@ export const getOrderItemsByOrderId = async (req, res) => {
           amount: item.amount,
           quantity: 0,
           items: [],
+          itemsGroupedByStatus: {}, // Add itemsGroupedByStatus for frontend compatibility
         };
       }
 
       productsMap[variantKey].quantity += item.quantity;
+      
+      // Add to items array
       productsMap[variantKey].items.push({
         _id: item._id,
         orderStatus: item.orderStatus,
@@ -855,23 +929,61 @@ export const getOrderItemsByOrderId = async (req, res) => {
         refundStatus: item.refundStatus,
         returnRequestNote: item.returnRequestNote,
         statusHistory: item.statusHistory,
-        quantiy: item.quantity,
+        quantity: item.quantity, // Fix typo: quantiy -> quantity
+        size: item.size,
+        color: item.color,
+        amount: item.amount,
+      });
+
+      // Add to itemsGroupedByStatus structure (required by frontend StatusUpdateModal)
+      if (!productsMap[variantKey].itemsGroupedByStatus[item.orderStatus]) {
+        productsMap[variantKey].itemsGroupedByStatus[item.orderStatus] = [];
+      }
+
+      productsMap[variantKey].itemsGroupedByStatus[item.orderStatus].push({
+        _id: item._id,
+        orderStatus: item.orderStatus,
+        cancelledAt: item.cancelledAt,
+        cancelId: item.cancelId,
+        returnRequestedAt: item.returnRequestedAt,
+        returnId: item.returnId,
+        returnedAt: item.returnedAt,
+        refundAmount: item.refundAmount,
+        refundProcessedAt: item.refundProcessedAt,
+        refundStatus: item.refundStatus,
+        returnRequestNote: item.returnRequestNote,
+        statusHistory: item.statusHistory,
+        quantity: item.quantity,
+        size: item.size,
+        color: item.color,
+        amount: item.amount,
       });
     }
 
     const products = Object.values(productsMap);
 
-    // Determine overall order status
+    // Determine overall order status based on item statuses
+    // Priority: Final statuses > Return statuses > Shipped > Ordered
     const statuses = order.items.map((i) => i.orderStatus);
     let overallStatus = OrderStatus.ORDERED.value;
+    
+    // Check for final statuses (all items must be in same final status)
     if (statuses.every((s) => s === OrderStatus.DELIVERED.value))
       overallStatus = OrderStatus.DELIVERED.value;
     else if (statuses.every((s) => s === OrderStatus.CANCELLED.value))
       overallStatus = OrderStatus.CANCELLED.value;
     else if (statuses.every((s) => s === OrderStatus.RETURNED.value))
       overallStatus = OrderStatus.RETURNED.value;
+    else if (statuses.every((s) => s === OrderStatus.REFUNDED.value))
+      overallStatus = OrderStatus.REFUNDED.value;
+    // Check for return-related statuses
     else if (statuses.includes(OrderStatus.RETURN_REQUESTED.value))
       overallStatus = OrderStatus.RETURN_REQUESTED.value;
+    else if (statuses.includes(OrderStatus.DEPARTED_FOR_RETURNING.value))
+      overallStatus = OrderStatus.DEPARTED_FOR_RETURNING.value;
+    else if (statuses.includes(OrderStatus.RETURN_CANCELLED.value))
+      overallStatus = OrderStatus.RETURN_CANCELLED.value;
+    // Check for shipped status
     else if (statuses.includes(OrderStatus.SHIPPED.value))
       overallStatus = OrderStatus.SHIPPED.value;
 
@@ -2870,7 +2982,11 @@ export const processReturnCancel = async (req, res) => {
 /**
  * Manual Status Update for Admin
  * POST /api/admin/newOrders/items/:itemId/update-status
- * Allows admin to manually update order item status with proper validation
+ * Allows admin to manually update order item status with proper validation.
+ * 
+ * IMPORTANT: Only forward transitions are allowed (e.g., Ordered → Shipped → Delivered).
+ * Backward transitions are strictly prohibited (e.g., Shipped → Ordered is not allowed).
+ * This ensures order status integrity and prevents data inconsistencies.
  */
 export const updateOrderItemStatus = async (req, res) => {
   const { itemId } = req.params;
@@ -2900,6 +3016,9 @@ export const updateOrderItemStatus = async (req, res) => {
     });
   }
 
+  // Store currentStatus outside transaction for use in response
+  let currentStatus = null;
+
   try {
     await withTransaction(async (session) => {
       // Find the order containing this item
@@ -2918,14 +3037,15 @@ export const updateOrderItemStatus = async (req, res) => {
       }
 
       const item = order.items[itemIndex];
-      const currentStatus = item.orderStatus;
+      currentStatus = item.orderStatus; // Store outside transaction scope
 
-      // Validate status transition
+      // Validate status transition (forward-only, no backward transitions)
       if (!canTransition(currentStatus, status)) {
         const availableTransitions = statusMap[currentStatus] || [];
         throw new Error(
-          `Cannot transition from "${currentStatus}" to "${status}". ` +
-          `Available transitions: ${availableTransitions.join(", ")}`
+          `Invalid status transition: Cannot change from "${currentStatus}" to "${status}". ` +
+          `Only forward transitions are allowed. ` +
+          `Available next statuses: ${availableTransitions.length > 0 ? availableTransitions.join(", ") : "None (final status)"}`
         );
       }
 
@@ -2990,15 +3110,23 @@ export const updateOrderItemStatus = async (req, res) => {
         }
       }
 
+      // Save order with updated status
+      // This update will be immediately visible to users when they fetch their orders
       await order.save({ session });
     });
 
+    // Transaction completed successfully - status update is now in database
+    // User endpoints (getUserOrders, getOrderByOrderId) will automatically reflect this change
+    // as they query the database directly with .lean()
+    
+    // Use currentStatus in response (now accessible outside transaction)
     return res.status(200).json({
       success: true,
       message: `Order item status updated successfully to ${status}`,
       data: {
         itemId,
         newStatus: status,
+        previousStatus: currentStatus,
         note: note || `Status updated from ${currentStatus} to ${status} by admin`
       }
     });
@@ -3015,7 +3143,10 @@ export const updateOrderItemStatus = async (req, res) => {
 /**
  * Get Available Status Transitions for an Item
  * GET /api/admin/newOrders/items/:itemId/available-transitions
- * Returns the possible status transitions for a specific order item
+ * Returns the possible status transitions for a specific order item.
+ * 
+ * NOTE: Only forward transitions are returned. Backward transitions are not available
+ * to maintain order status integrity (e.g., once Shipped, cannot go back to Ordered).
  */
 export const getAvailableStatusTransitions = async (req, res) => {
   const { itemId } = req.params;
@@ -3047,13 +3178,13 @@ export const getAvailableStatusTransitions = async (req, res) => {
     const currentStatus = item.orderStatus;
     const availableTransitions = statusMap[currentStatus] || [];
 
-    // Get status details for available transitions
+    // Get status details for available transitions (forward-only)
     const transitionDetails = availableTransitions.map(statusValue => {
       const statusObj = Object.values(OrderStatus).find(s => s.value === statusValue);
       return {
         value: statusValue,
-        label: statusObj?.label || statusValue,
-        description: statusObj?.description || ""
+        label: statusValue, // Use the value as label since OrderStatus doesn't have label property
+        description: `Move forward from ${currentStatus} to ${statusValue}`
       };
     });
 
