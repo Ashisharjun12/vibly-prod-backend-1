@@ -8,6 +8,8 @@ import { PaymentTransaction, PaymentStatus, PaymentProvider } from '../models/pa
 class PaymentService {
   constructor() {
     this.razorpay = null;
+    this.razorpayKeyId = null;
+    this.razorpayKeySecret = null;
     this.cashfree = null;
     this.initializeProviders();
   }
@@ -22,21 +24,37 @@ class PaymentService {
       }
 
       // Initialize Razorpay if enabled
+      // Priority: .env file credentials > database credentials
       const razorpayConfig = config.providers.find(p => p.name === 'razorpay');
       if (razorpayConfig && razorpayConfig.isEnabled) {
-        this.razorpay = new Razorpay({
-          key_id: razorpayConfig.credentials.keyId || _config.RAZORPAY_KEY_ID,
-          key_secret: razorpayConfig.credentials.keySecret || _config.RAZORPAY_KEY_SECRET,
-        });
+        // Use .env credentials if available, otherwise fall back to database credentials
+        const keyId = _config.RAZORPAY_KEY_ID || razorpayConfig.credentials.keyId;
+        const keySecret = _config.RAZORPAY_KEY_SECRET || razorpayConfig.credentials.keySecret;
+        
+        if (keyId && keySecret) {
+          this.razorpayKeyId = keyId;
+          this.razorpayKeySecret = keySecret;
+          this.razorpay = new Razorpay({
+            key_id: keyId,
+            key_secret: keySecret,
+          });
+          console.log(`Razorpay initialized with ${keyId.startsWith('rzp_live_') ? 'LIVE' : 'TEST'} mode`);
+        }
       }
 
       // Initialize Cashfree if enabled
+      // Priority: .env file credentials > database credentials
       const cashfreeConfig = config.providers.find(p => p.name === 'cashfree');
       if (cashfreeConfig && cashfreeConfig.isEnabled) {
-        this.cashfree = {
-          appId: cashfreeConfig.credentials.keyId || _config.CASHFREE_APP_ID,
-          secretKey: cashfreeConfig.credentials.keySecret || _config.CASHFREE_SECRET_KEY,
-        };
+        const appId = _config.CASHFREE_APP_ID || cashfreeConfig.credentials.keyId;
+        const secretKey = _config.CASHFREE_SECRET_KEY || cashfreeConfig.credentials.keySecret;
+        
+        if (appId && secretKey) {
+          this.cashfree = {
+            appId: appId,
+            secretKey: secretKey,
+          };
+        }
       }
     } catch (error) {
       console.error('Error initializing payment providers:', error);
@@ -117,9 +135,12 @@ class PaymentService {
 
     const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = paymentData;
     
+    // Use the same key secret that was used for initialization
+    const keySecret = this.razorpayKeySecret || _config.RAZORPAY_KEY_SECRET;
+    
     const body = razorpay_order_id + "|" + razorpay_payment_id;
     const expectedSignature = crypto
-      .createHmac("sha256", _config.RAZORPAY_KEY_SECRET)
+      .createHmac("sha256", keySecret)
       .update(body.toString())
       .digest("hex");
 

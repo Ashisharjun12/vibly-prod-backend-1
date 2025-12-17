@@ -162,8 +162,9 @@ export const createPaymentOrder = async (req, res) => {
     };
 
     // Add provider-specific data
+    // Priority: .env file credentials > database credentials
     if (provider === 'razorpay') {
-      responseData.key_id = providerConfig.credentials.keyId || _config.RAZORPAY_KEY_ID;
+      responseData.key_id = _config.RAZORPAY_KEY_ID || providerConfig.credentials.keyId;
     }
 
     return res.status(200).json({
